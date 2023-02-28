@@ -1,6 +1,22 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import progressbar
+import math
+
+
+def get_distance_point2line(point, line):
+    """
+    Args:
+        point: [x0, y0]
+        line: [x1, y1, x2, y2]
+    """
+    line_point1, line_point2 = np.array(line[0:2]), np.array(line[2:])
+    vec1 = line_point1 - point
+    vec2 = line_point2 - point
+    distance = np.abs(np.cross(
+        vec1, vec2)) / np.linalg.norm(line_point1 - line_point2)
+    return distance
 
 
 class Node:
@@ -38,16 +54,15 @@ class RRT:
         return nearest_node
 
     def is_collision_free(self, node1, node2):
+
+        x1, y1 = node1.x, node1.y
+        x2, y2 = node2.x, node2.y
+
         for obs in self.obstacles:
-            x_obs, y_obs, r_obs = obs
-            x1, y1 = node1.x, node1.y
-            x2, y2 = node2.x, node2.y
-            m = (y2 - y1) / (x2 - x1)
-            c = y1 - m * x1
-            x = np.linspace(x1, x2, num=50)
-            y = m * x + c
-            d = (x - x_obs)**2 + (y - y_obs)**2
-            if any(d < r_obs**2):
+            x_obs, y_obs, r = obs
+
+            d = get_distance_point2line([x_obs, y_obs], [x1, y1, x2, y2])
+            if d < 0.5:
                 return False
         return True
 
@@ -60,7 +75,8 @@ class RRT:
 6. If we can, we add the goal to the tree and break out of the loop. """
 
     def build_rrt(self):
-        for i in range(self.max_iter):
+        p = progressbar.ProgressBar()
+        for i in p(range(self.max_iter)):
             sample = self.random_sample()
             nearest_node = self.find_nearest_node(sample)
             theta = np.arctan2(sample.y - nearest_node.y,
@@ -81,28 +97,32 @@ class RRT:
         plt.figure()
         plt.plot(self.start.x, self.start.y, 'go')
         plt.plot(self.goal.x, self.goal.y, 'ro')
-        node = self.goal
-        while True:
-            if node.parent is not None:
-                plt.plot([node.x, node.parent.x], [node.y, node.parent.y],
-                         'b-')
-                node = node.parent
-            else:
-                break
-        for obs in self.obstacles:
-            x, y, r = obs
-            circle = plt.Circle((x, y), r, color='k')
-            plt.gcf().gca().add_artist(circle)
+        for edge in self.edges:
+            x = [edge[0].x, edge[1].x]
+            y = [edge[0].y, edge[1].y]
+            plt.plot(x, y, 'b-')
+        # while True:
+        #     if node.parent is not None:
+        #         plt.plot([node.x, node.parent.x], [node.y, node.parent.y],
+        #                  'b-')
+        #         node = node.parent
+        #     else:
+        #         break
+
+        plt.scatter(obstacles[:, 1], obstacles[:, 0], s=1)
         plt.axis('equal')
         plt.show()
 
 
-start = [1, 1]
-goal = [9, 9]
-obstacles = [[5, 5, 2], [1, 5, 1], [4, 2, 0.2], [1, 9, 4], [1, 2, 0.3]]
-step_size = 0.3
-max_iter = 10000
+if __name__ == '__main__':
+    start = [100, 110]
+    goal = [100, 0]
+    namenum = 4
+    img = np.load("mid/" + str(namenum) + ".npy")
+    obstacles = img
+    step_size = 2
+    max_iter = 100
 
-rrt = RRT(start, goal, obstacles, step_size, max_iter)
-rrt.build_rrt()
-rrt.plot()
+    rrt = RRT(start, goal, obstacles, step_size, max_iter)
+    rrt.build_rrt()
+    rrt.plot()
