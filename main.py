@@ -36,6 +36,8 @@ velocity = None  #速度
 
 buoy_list = None  #浮标位置
 path = None  #路径
+dt = 0.1
+dl = 2
 
 
 # GPS信息接收函数
@@ -67,6 +69,37 @@ def Buoy_receive():
         data, _ = socket_Buoy.recvfrom(1024)
         data_json = json.loads(data.decode('utf-8'))
         buoy_list = data_json['buoys']
+
+
+def PID_controller(current_yaw, target_yaw):
+    global pre_error, sum_error
+
+    Kp = 0.02
+    Ki = 0
+    Kd = 0.002
+
+    max = 1
+    min = -1
+
+    error = target_yaw - current_yaw
+
+    # 将error的值限制在(-180,180]
+    if error > 180:
+        error = error - 360
+    if error <= -180:
+        error = error + 360
+
+    steer = Kp * error + Ki * sum_error * dt + Kd * (error - pre_error) / dt
+
+    if steer > max:
+        steer = max
+    if steer < min:
+        steer = min
+
+    sum_error += error
+    pre_error = error
+
+    return steer
 
 
 # 发送路径
@@ -131,7 +164,7 @@ def path():
         [x, y] = get_relative_position(wps84_begin[0], wps84_begin[1],
                                        obstacle['longitude'],
                                        obstacle['latitude'])
-        obstacles.append([x, y, 2.5])
+        obstacles.append([x, y, 5])
     #坐标转换
     #print(obstacles)
     # plt.figure()
@@ -210,17 +243,34 @@ def Model():
 
         print("buoy:", buoy_list)
 
-        # path = [{'longitude': 121.43813605886, 'latitude': 31.0285482382593}, {'longitude': 121.438256509255, 'latitude': 31.0284508268229},\
-        #         {'longitude': 121.438370675377, 'latitude': 31.0283723565488}, {'longitude': 121.438253367199, 'latitude': 31.0283146312557},\
-        #         {'longitude': 121.438463893444, 'latitude': 31.0284643561852}]
-        path = get_path()
+        path = [{
+            'longitude': 121.438074312978,
+            'latitude': 31.0286316336127
+        }, {
+            'longitude': 121.438954507803,
+            'latitude': 31.0280814275016
+        }]
+        #path = get_path()
         try:
             Path_send(path)
         except:
             pass
+        end_point = get_relative_position(path[0]['longitude'],
+                                          path[0]['latitude'],
+                                          path[1]['longitude'],
+                                          path[1]['latitude'])
+        ship_point = get_relative_position(path[0]['longitude'],
+                                           path[0]['latitude'], longitude,
+                                           latitude)
+        startpoint = [0, 0]
+        #垂线方程
 
-        Control_send(0, 0)
-        time.sleep(2)
+        target_yaw = 0  #待计算
+        steer = PID_controller(yaw, target_yaw)  #控制
+
+        Control_send(0.2, steer)  #发送控制量
+
+        time.sleep(dt)  #控制量更新频率
 
 
 if __name__ == "__main__":
