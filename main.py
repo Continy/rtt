@@ -38,6 +38,15 @@ buoy_list = None  #浮标位置
 path = None  #路径
 dt = 0.1
 dl = 2
+pre_error = 0
+sum_error = 0
+distance = 0
+is_close_to_start = False
+
+
+#求距离
+def get_distance(a, b):
+    return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
 
 
 # GPS信息接收函数
@@ -75,7 +84,7 @@ def PID_controller(current_yaw, target_yaw):
     global pre_error, sum_error
 
     Kp = 0.02
-    Ki = 0
+    Ki = 0.0
     Kd = 0.002
 
     max = 1
@@ -140,19 +149,36 @@ def get_absolute_position(longitude, latitude, x, y):
     return [target_longitude, target_latitude]
 
 
-def get_path():
+def get_path(wps84_begin, wps84_end):
     if longitude is None or latitude is None or buoy_list is None:
         return
     else:
-        return path()
+        return path(wps84_begin, wps84_end)
 
 
-def path():
+#计算向量与x轴的夹角，范围为0~360
+def get_angle(vector):
+    x = vector[0]
+    y = vector[1]
+    angle = math.atan2(x, y) * 180 / math.pi
+    if angle < 0:
+        angle = 360 + angle
+    return angle
+
+
+#根据角度计算向量
+def get_vector(angle):
+    angle = angle * math.pi / 180
+    vector = [4 * math.sin(angle), 4 * math.cos(angle)]
+    return vector
+
+
+def path(wps84_begin, wps84_end):
     global path
     global buoy_list
     wps84_obstacles = buoy_list
-    wps84_begin = [121.438074312978, 31.0286316336127]
-    wps84_end = [121.438954507803, 31.0280814275016]
+    # wps84_begin = [121.438074312978, 31.0286316336127]
+    # wps84_end = [121.438954507803, 31.0280814275016]
     begin = get_relative_position(wps84_begin[0], wps84_begin[1],
                                   wps84_begin[0], wps84_begin[1])
     end = get_relative_position(wps84_begin[0], wps84_begin[1], wps84_end[0],
@@ -164,22 +190,11 @@ def path():
         [x, y] = get_relative_position(wps84_begin[0], wps84_begin[1],
                                        obstacle['longitude'],
                                        obstacle['latitude'])
-        obstacles.append([x, y, 5])
+        obstacles.append([x, y, 0])
     #坐标转换
-    #print(obstacles)
-    # plt.figure()
-    # for obstacle in obstacles:
-    #     circle = plt.Circle((obstacle[0], obstacle[1]), obstacle[2])
-    #     plt.gca().add_patch(circle)
-    # plt.scatter(begin[0], begin[1], c='r')
-    # plt.scatter(end[0], end[1], c='g')
 
     boundary = [-35, 58, -35, 10]
-    #draw boundary
-    # plt.plot([boundary[0], boundary[1]], [boundary[2], boundary[2]], c='k')
-    # plt.plot([boundary[0], boundary[1]], [boundary[3], boundary[3]], c='k')
-    # plt.plot([boundary[0], boundary[0]], [boundary[2], boundary[3]], c='k')
-    # plt.plot([boundary[1], boundary[1]], [boundary[2], boundary[3]], c='k')
+
     step_size = 1
     max_iter = 1000
     rrt = RRT(begin, end, obstacles, step_size, max_iter, boundary)
@@ -202,75 +217,210 @@ def path():
          latitude] = get_absolute_position(wps84_begin[0], wps84_begin[1],
                                            point[0], point[1])
         wps84_path.append({'longitude': longitude, 'latitude': latitude})
-    with open('path.json', 'w') as f:
-        json.dump(wps84_path, f)
 
-    total_curve = rrt.bezier()
+    # total_curve = rrt.bezier()
     wps84_curve = []  #json格式
-    for curve in total_curve:
-        x = [point.x for point in curve]
-        y = [point.y for point in curve]
-        plt.plot(x, y, 'r-')
-    for curve in total_curve:
-        for point in curve:
-            [longitude,
-             latitude] = get_absolute_position(wps84_begin[0], wps84_begin[1],
-                                               point.x, point.y)
-            wps84_curve.append({'longitude': longitude, 'latitude': latitude})
+    # for curve in total_curve:
+    #     x = [point.x for point in curve]
+    #     y = [point.y for point in curve]
+    #     plt.plot(x, y, 'r-')
+    # for curve in total_curve:
+    #     for point in curve:
+    #         [longitude,
+    #          latitude] = get_absolute_position(wps84_begin[0], wps84_begin[1],
+    #                                            point.x, point.y)
+    #         wps84_curve.append({'longitude': longitude, 'latitude': latitude})
     with open('curve.json', 'w') as f:
         json.dump(wps84_curve, f)
-    #rrt.plot()
+    rrt.plot()
+    wps84_path.pop(0)
+    wps84_path.reverse()
+    with open('path.json', 'w') as f:
+        json.dump(wps84_path, f)
     return wps84_path
+
+
+#阶段速度控制
+def speed_control(distance):
+    if distance > 20:
+        return 0.4
+    elif distance > 10:
+        return 0.4
+    else:
+        return 0.05 * distance
+
+
+#求两向量夹角
+def get_angle_between(vector1, vector2):
+    angle = math.acos((vector1[0] * vector2[0] + vector1[1] * vector2[1]) /
+                      (math.sqrt(vector1[0]**2 + vector1[1]**2) *
+                       math.sqrt(vector2[0]**2 + vector2[1]**2)))
+    angle = angle * 180 / math.pi
+    return angle
+
+
+#回到起点
+
+
+#循迹算法 ship与point为相对坐标
+def follow_point(ship, point):
+
+    ship_vector = get_vector(yaw)
+    #船首与目标点向量
+
+    distance = get_distance(ship, point)
+    target_yaw = get_angle([point[0] - ship[0], point[1] - ship[1]])
+
+    #print(target_yaw)
+    steer = PID_controller(yaw, target_yaw)
+    if distance < 3:
+        return True
+    #Control_send(0.2, steer)
+    if yaw - target_yaw < 90:
+        Control_send(speed_control(distance), steer)
+    else:
+        Control_send(-speed_control(distance), steer)
+    return False
+
+
+def point_to_line_distance(point, p1, p2):
+    x0, y0 = point
+    x1, y1 = p1
+    x2, y2 = p2
+    return abs((y2 - y1) * x0 -
+               (x2 - x1) * y0 + x2 * y1 - y2 * x1) / math.sqrt((y2 - y1)**2 +
+                                                               (x2 - x1)**2)
+
+
+#循迹算法 方法为LOS视线引导法
+def get_los_point(ship, path, step=5):
+    #当前终点
+
+    end = get_relative_position(path[0]['longitude'], path[0]['latitude'],
+                                path[1]['longitude'], path[1]['latitude'])
+    #当前船位置
+
+    #终点关于原点的向量
+    mid_distance = point_to_line_distance(ship, [0, 0], end)
+    #船位置关于终点向量的垂直向量
+    #判断船在航迹的左侧还是右侧
+    ship_vector = [
+        end[1] / math.sqrt(end[0]**2 + end[1]**2),
+        -end[0] / math.sqrt(end[0]**2 + end[1]**2)
+    ]
+    if ship[0] * end[1] - ship[1] * end[0] > 0:
+
+        ship_vector = [-ship_vector[0], -ship_vector[1]]
+    #船位置关于终点向量的投影
+
+    ship_project = [
+        ship[0] + mid_distance * ship_vector[0],
+        ship[1] + mid_distance * ship_vector[1]
+    ]
+    #步长向量
+    delta = [
+        step * end[0] / math.sqrt(end[0]**2 + end[1]**2),
+        step * end[1] / math.sqrt(end[0]**2 + end[1]**2)
+    ]
+    #视线引导终点
+    if step >= get_distance(ship_project, end):
+        los_end = end
+
+    else:
+        los_end = [ship_project[0] + delta[0], ship_project[1] + delta[1]]
+    #循迹
+    plt.scatter(los_end[0], los_end[1], c='r')
+    plt.scatter(ship[0], ship[1], c='b')
+    plt.plot([0, end[0]], [0, end[1]], c='g')
+    plt.plot([ship[0], ship_project[0]], [ship[1], ship_project[1]], c='y')
+    plt.plot([ship_project[0], los_end[0]], [ship_project[1], los_end[1]],
+             c='r')
+    #plt.show()
+
+    return los_end
 
 
 # 控制算法
 def Model():
-
+    global distance
+    is_path = False
+    path_length = 0
+    finall = False
+    reached = True
+    los_end = []
+    end = []
     while True:
 
         if longitude == None or latitude == None or pitch == None or roll == None or yaw == None:
 
-            # 如果没有收到信息，就跳出这个循环
             time.sleep(0.1)
             continue
 
-        print("longitude:", longitude)
-        print("latitude:", latitude)
-
-        print("pitch:", pitch)
-        print("roll:", roll)
-        print("yaw:", yaw)
-
-        print("buoy:", buoy_list)
-
-        path = [{
-            'longitude': 121.438074312978,
-            'latitude': 31.0286316336127
-        }, {
-            'longitude': 121.438954507803,
-            'latitude': 31.0280814275016
-        }]
-        #path = get_path()
-        try:
+        if is_path == False:
+            print("初始化")
+            # path = get_path([longitude, latitude],
+            #                 [121.438074312978, 31.0286316336127])
+            # print(longitude, latitude)
+            # path = get_path([longitude, latitude],
+            #                 [121.438954507803, 31.0280814275016])
+            path = [{
+                "longitude": 121.437910949701,
+                "latitude": 31.0287220671825
+            }, {
+                "longitude": 121.438954507803,
+                "latitude": 31.0280814275016
+            }]
+            path_length = len(path)
             Path_send(path)
-        except:
-            pass
-        end_point = get_relative_position(path[0]['longitude'],
-                                          path[0]['latitude'],
-                                          path[1]['longitude'],
-                                          path[1]['latitude'])
-        ship_point = get_relative_position(path[0]['longitude'],
-                                           path[0]['latitude'], longitude,
-                                           latitude)
-        startpoint = [0, 0]
-        #垂线方程
+            is_path = True
+            if reached:
+                ship = get_relative_position(path[0]['longitude'],
+                                             path[0]['latitude'], longitude,
+                                             latitude)
+                los_end = get_los_point(ship, path, step=10)
+                end = get_relative_position(path[0]['longitude'],
+                                            path[0]['latitude'],
+                                            path[1]['longitude'],
+                                            path[1]['latitude'])
+                reached = False
+        # los_end = get_relative_position(path[0]['longitude'],
+        #                                 path[0]['latitude'],
+        #                                 path[1]['longitude'],
+        #                                 path[1]['latitude'])
+        # path = get_path([longitude, latitude],
+        #                 [121.438954507803, 31.0280814275016])
+        # Path_send(path)
+        #print(is_path)
+        #回到起点
 
-        target_yaw = 0  #待计算
-        steer = PID_controller(yaw, target_yaw)  #控制
+        ship = get_relative_position(path[0]['longitude'], path[0]['latitude'],
+                                     longitude, latitude)
+        reached = follow_point(ship, los_end)
+        if get_distance(ship, end) > 3 and reached:
+            los_end = get_los_point(ship, path, step=10)
+            reached = False
+            print("到达中间点")
+            continue
+        elif reached:
+            path.pop(0)
+            if len(path) == 1:
+                print('到达目的地!')
+                Control_send(0, 0)
+                finall = True
+                break
 
-        Control_send(0.2, steer)  #发送控制量
+            los_end = get_los_point(ship, path, step=10)
+            reached = False
+        if finall:
+            break
+        distance = get_distance(ship, los_end)
+        time.sleep(0.1)  #控制量更新频率
 
-        time.sleep(dt)  #控制量更新频率
+
+def midData():
+    while True:
+        print("下一次目标点距离为：", distance)
+        time.sleep(1)
 
 
 if __name__ == "__main__":
@@ -279,11 +429,13 @@ if __name__ == "__main__":
     thread_GPS = threading.Thread(target=GPS_receive, daemon=True)
     thread_IMU = threading.Thread(target=IMU_receive, daemon=True)
     thread_Buoy = threading.Thread(target=Buoy_receive, daemon=True)
-    thread_Path = threading.Thread(target=get_path, daemon=True)
+    thread_Mid = threading.Thread(target=midData, daemon=True)
+    #thread_Path = threading.Thread(target=get_path, daemon=True)
     thread_GPS.start()
     thread_IMU.start()
     thread_Buoy.start()
-    thread_Path.start()
+    thread_Mid.start()
+    #thread_Path.start()
 
     #控制程序
     Model()

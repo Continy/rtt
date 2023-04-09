@@ -234,7 +234,7 @@ class RRT:
             circle = plt.Circle((x, y), r, color='k')
             plt.gcf().gca().add_artist(circle)
         plt.axis('equal')
-        plt.show()
+        #plt.show()
 
 
 if __name__ == '__main__':
