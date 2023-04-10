@@ -190,7 +190,7 @@ def path(wps84_begin, wps84_end):
         [x, y] = get_relative_position(wps84_begin[0], wps84_begin[1],
                                        obstacle['longitude'],
                                        obstacle['latitude'])
-        obstacles.append([x, y, 0])
+        obstacles.append([x, y, 4])
     #坐标转换
 
     boundary = [-35, 58, -35, 10]
@@ -199,7 +199,7 @@ def path(wps84_begin, wps84_end):
     max_iter = 1000
     rrt = RRT(begin, end, obstacles, step_size, max_iter, boundary)
     rrt.build_rrt()
-    rrt.prune(rrt.goal)
+    #rrt.prune(rrt.goal, 2)
     rrt.get_path()
     rrt.get_control_points(mode='default')
     path_points = []
@@ -241,13 +241,21 @@ def path(wps84_begin, wps84_end):
 
 
 #阶段速度控制
-def speed_control(distance):
-    if distance > 20:
-        return 0.4
-    elif distance > 10:
-        return 0.4
+def speed_control(distance, is_path_point):
+    if is_path_point:
+        if distance > 20:
+            return 0.8
+        elif distance > 10:
+            return 0.5
+        else:
+            return 0.05 * distance
     else:
-        return 0.05 * distance
+        if distance > 20:
+            return 0.8
+        elif distance > 10:
+            return 0.5
+        else:
+            return 0.02 * distance + 0.3
 
 
 #求两向量夹角
@@ -263,7 +271,7 @@ def get_angle_between(vector1, vector2):
 
 
 #循迹算法 ship与point为相对坐标
-def follow_point(ship, point):
+def follow_point(ship, point, is_path_point):
 
     ship_vector = get_vector(yaw)
     #船首与目标点向量
@@ -273,13 +281,13 @@ def follow_point(ship, point):
 
     #print(target_yaw)
     steer = PID_controller(yaw, target_yaw)
-    if distance < 3:
+    if distance < 2:
         return True
     #Control_send(0.2, steer)
     if yaw - target_yaw < 90:
-        Control_send(speed_control(distance), steer)
+        Control_send(speed_control(distance, is_path_point), steer)
     else:
-        Control_send(-speed_control(distance), steer)
+        Control_send(-speed_control(distance, is_path_point), steer)
     return False
 
 
@@ -325,19 +333,32 @@ def get_los_point(ship, path, step=5):
     #视线引导终点
     if step >= get_distance(ship_project, end):
         los_end = end
+        return [los_end, True]
 
     else:
         los_end = [ship_project[0] + delta[0], ship_project[1] + delta[1]]
+        return [los_end, False]
     #循迹
-    plt.scatter(los_end[0], los_end[1], c='r')
-    plt.scatter(ship[0], ship[1], c='b')
-    plt.plot([0, end[0]], [0, end[1]], c='g')
-    plt.plot([ship[0], ship_project[0]], [ship[1], ship_project[1]], c='y')
-    plt.plot([ship_project[0], los_end[0]], [ship_project[1], los_end[1]],
-             c='r')
+    # plt.scatter(los_end[0], los_end[1], c='r')
+    # plt.scatter(ship[0], ship[1], c='b')
+    # plt.plot([0, end[0]], [0, end[1]], c='g')
+    # plt.plot([ship[0], ship_project[0]], [ship[1], ship_project[1]], c='y')
+    # plt.plot([ship_project[0], los_end[0]], [ship_project[1], los_end[1]],
+    #          c='r')
     #plt.show()
 
-    return los_end
+
+def default_path(mode):
+    if mode == 0:
+        path = get_path([longitude, latitude],
+                        [121.438074312978, 31.0286316336127])
+    elif mode == 1:
+        path = get_path([longitude, latitude],
+                        [121.438954507803, 31.0280814275016])
+    else:
+        path = get_path([longitude, latitude],
+                        [121.437910949701, 31.0287220671825])
+    return path
 
 
 # 控制算法
@@ -358,18 +379,14 @@ def Model():
 
         if is_path == False:
             print("初始化")
-            # path = get_path([longitude, latitude],
-            #                 [121.438074312978, 31.0286316336127])
-            # print(longitude, latitude)
-            # path = get_path([longitude, latitude],
-            #                 [121.438954507803, 31.0280814275016])
-            path = [{
-                "longitude": 121.437910949701,
-                "latitude": 31.0287220671825
-            }, {
-                "longitude": 121.438954507803,
-                "latitude": 31.0280814275016
-            }]
+            path = default_path(1)
+            # path = [{
+            #     "longitude": 121.437910949701,
+            #     "latitude": 31.0287220671825
+            # }, {
+            #     "longitude": 121.438954507803,
+            #     "latitude": 31.0280814275016
+            # }]
             path_length = len(path)
             Path_send(path)
             is_path = True
@@ -380,8 +397,8 @@ def Model():
                 los_end = get_los_point(ship, path, step=10)
                 end = get_relative_position(path[0]['longitude'],
                                             path[0]['latitude'],
-                                            path[1]['longitude'],
-                                            path[1]['latitude'])
+                                            path[-1]['longitude'],
+                                            path[-1]['latitude'])
                 reached = False
         # los_end = get_relative_position(path[0]['longitude'],
         #                                 path[0]['latitude'],
@@ -395,14 +412,15 @@ def Model():
 
         ship = get_relative_position(path[0]['longitude'], path[0]['latitude'],
                                      longitude, latitude)
-        reached = follow_point(ship, los_end)
-        if get_distance(ship, end) > 3 and reached:
+        reached = follow_point(ship, los_end[0], los_end[1])
+        if reached and los_end[1] == False:
             los_end = get_los_point(ship, path, step=10)
             reached = False
             print("到达中间点")
             continue
-        elif reached:
+        elif reached and los_end[1] == True:
             path.pop(0)
+            print("到达PATH节点")
             if len(path) == 1:
                 print('到达目的地!')
                 Control_send(0, 0)
@@ -413,7 +431,7 @@ def Model():
             reached = False
         if finall:
             break
-        distance = get_distance(ship, los_end)
+        distance = get_distance(ship, los_end[0])
         time.sleep(0.1)  #控制量更新频率
 
 
