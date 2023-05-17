@@ -5,6 +5,7 @@ import time
 from rrt_circle import RRT
 import matplotlib.pyplot as plt
 import math
+import serial
 
 Host = '127.0.0.1'  #IP地址
 
@@ -120,13 +121,23 @@ def Path_send(path_points):
     socket_Path.sendto(path, (Host, Port_Path))
 
 
+def virtual2rpm(speed, steer):
+    left_rpm = 1400 + speed * 150 - steer * 150
+    right_rpm = 1400 + speed * 150 + steer * 150
+    return [left_rpm, right_rpm]
+
+
 # 发送控制信号，throttle为油门，steer为方向，范围均为 -1 ~ 1
 def Control_send(throttle, steer):
     control_cmd = {}
-    control_cmd["throttle"] = throttle
-    control_cmd["steer"] = steer
+    # control_cmd["throttle"] = throttle
+    # control_cmd["steer"] = steer
+    control_cmd["left_rpm"] = virtual2rpm(throttle, steer)[0]
+    control_cmd["right_rpm"] = virtual2rpm(throttle, steer)[1]
     control_cmd = json.dumps(control_cmd)
     control_cmd = control_cmd.encode('utf-8')
+    arduino_ser = serial.Serial('COM3', 9600, timeout=1)
+    arduino_ser.write(control_cmd)
     socket_Control.sendto(control_cmd, (Host, Port_Control))
 
 
@@ -281,7 +292,7 @@ def follow_point(ship, point, is_path_point):
 
     #print(target_yaw)
     steer = PID_controller(yaw, target_yaw)
-    if distance < 2:
+    if distance < 1:
         return True
     #Control_send(0.2, steer)
     if yaw - target_yaw < 90:
@@ -379,7 +390,7 @@ def Model():
 
         if is_path == False:
             print("初始化")
-            path = default_path(1)
+            path = default_path(2)
             # path = [{
             #     "longitude": 121.437910949701,
             #     "latitude": 31.0287220671825
